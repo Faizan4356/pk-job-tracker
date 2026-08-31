@@ -37,6 +37,78 @@ st.set_page_config(page_title="PK Govt Job Tracker", layout="wide")
 
 init_db()
 
+# ---------------------------------------------------------------------------
+# Theming — animated moving-gradient background + frosted-glass cards so
+# text stays legible over it, plus a distinct accent color per degree level.
+# Streamlit doesn't support this via config.toml (no animation support), so
+# it's injected as raw CSS targeting stable data-testid selectors.
+# ---------------------------------------------------------------------------
+
+DEGREE_COLORS = {
+    "Matric": "#3b82f6",       # blue
+    "Intermediate": "#14b8a6",  # teal
+    "Bachelor": "#22c55e",      # green
+    "Master": "#a855f7",        # purple
+    "MPhil": "#f97316",         # orange
+    "PhD": "#ec4899",           # pink
+    "Not listed": "#6b7280",    # gray
+}
+
+st.markdown(
+    """
+    <style>
+    @keyframes moveGradient {
+        0%   { background-position: 0% 50%; }
+        50%  { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+    .stApp {
+        background: linear-gradient(
+            -45deg, #0f2027, #2c5364, #1e3c72, #134e5e, #2b5876, #0f2027
+        );
+        background-size: 400% 400%;
+        animation: moveGradient 20s ease infinite;
+    }
+    [data-testid="stSidebar"] {
+        background: rgba(15, 23, 42, 0.85);
+        backdrop-filter: blur(6px);
+    }
+    [data-testid="stExpander"] {
+        background: rgba(255, 255, 255, 0.94);
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+        margin-bottom: 0.5rem;
+    }
+    /* Light text everywhere by default (readable on the dark moving
+       background), overridden back to dark text specifically inside the
+       white expander cards — without this split, job details inside the
+       cards would render as near-invisible light-on-white text. */
+    h1, h2, h3, h4 {
+        color: #ffffff !important;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    }
+    p, span, label, .stMarkdown, .stCaption, [data-testid="stCaptionContainer"] {
+        color: #f1f5f9;
+    }
+    /* Catch-all (not just specific tags) so this holds regardless of which
+       element Streamlit's expander header/body actually use internally. */
+    [data-testid="stExpander"] * {
+        color: #1e293b !important;
+        text-shadow: none !important;
+    }
+    .stButton > button, .stLinkButton > a {
+        border-radius: 8px;
+        transition: transform 0.15s ease;
+    }
+    .stButton > button:hover, .stLinkButton > a:hover {
+        transform: scale(1.03);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("🇵🇰 Pakistani Government Job Tracker")
 
 # ---------------------------------------------------------------------------
@@ -166,7 +238,14 @@ for level in DEGREE_ORDER:
     if not jobs_in_group:
         continue
 
-    st.markdown(f"### {level} ({len(jobs_in_group)} post{'s' if len(jobs_in_group) != 1 else ''})")
+    color = DEGREE_COLORS.get(level, "#ffffff")
+    count_label = f"{len(jobs_in_group)} post{'s' if len(jobs_in_group) != 1 else ''}"
+    st.markdown(
+        f'<h3 style="color:{color} !important; text-shadow: 0 2px 8px rgba(0,0,0,0.4); '
+        f'border-left: 6px solid {color}; padding-left: 0.6rem;">{level} '
+        f'<span style="font-size:0.6em; opacity:0.85;">({count_label})</span></h3>',
+        unsafe_allow_html=True,
+    )
 
     for job, is_match, reasons in jobs_in_group:
         render_job_card(job, is_match, reasons)
