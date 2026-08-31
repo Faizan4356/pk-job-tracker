@@ -109,7 +109,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🇵🇰 Pakistani Government Job Tracker")
+GITHUB_REPO_URL = "https://github.com/Faizan4356/pk-job-tracker"
+
+title_col, link_col = st.columns([5, 1])
+with title_col:
+    st.title("🇵🇰 Pakistani Government Job Tracker")
+with link_col:
+    st.link_button("⭐ View on GitHub", GITHUB_REPO_URL, use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # Sidebar — optional profile (used only to badge/filter jobs that DO have
@@ -117,6 +123,8 @@ st.title("🇵🇰 Pakistani Government Job Tracker")
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
+    st.link_button("⭐ View source on GitHub", GITHUB_REPO_URL, use_container_width=True)
+    st.divider()
     st.header("Your Profile")
     st.caption("Used to badge jobs that have eligibility data. Most listings "
                "don't yet — see the note at the top of the page.")

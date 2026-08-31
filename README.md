@@ -1,5 +1,8 @@
 # PK Govt Job Tracker
 
+**Live dashboard:** https://pk-job-tracker-xgbxf6amw5icfxszctem8q.streamlit.app/
+*(currently set to private on Streamlit Cloud — switch it to Public in the app's sharing settings if you want this link to actually work for others)*
+
 A pipeline that scrapes Pakistani government job listings (FPSC, PPSC),
 extracts each post's real eligibility requirements out of the PDF
 advertisements they're bundled in, and shows you every open job grouped by
