@@ -1,0 +1,43 @@
+name: Daily job scrape
+
+on:
+  schedule:
+    # 08:00 Pakistan Standard Time (UTC+5) = 03:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}  # allows manually triggering a run from the Actions tab
+
+# jobs.db is committed back to the repo after each run so dedup state
+# (first_seen_date, applied checkboxes, AI-extracted fields) persists across
+# runs on GitHub's ephemeral runners.
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PROFILE_QUALIFICATION: ${{ secrets.PROFILE_QUALIFICATION }}
+          PROFILE_FIELD_OF_STUDY: ${{ secrets.PROFILE_FIELD_OF_STUDY }}
+          PROFILE_AGE: ${{ secrets.PROFILE_AGE }}
+          PROFILE_DOMICILE: ${{ secrets.PROFILE_DOMICILE }}
+        run: python pipeline.py
+
+      - name: Commit updated jobs.db
+        run: |
+          git config user.name "job-tracker-bot"
+          git config user.email "actions@github.com"
+          git add jobs.db
+          git diff --cached --quiet || git commit -m "Update jobs.db [automated]"
+          git push

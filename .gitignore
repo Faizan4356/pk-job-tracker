@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+.streamlit/
+*.pdf
+*.log
+fpsc_pdf_progress.json
