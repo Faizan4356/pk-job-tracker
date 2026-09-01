@@ -85,9 +85,8 @@ any extraction run to see counts per bucket and flag anything unexpected.
 | Storage | SQLite (dedup on post title + department + closing date, tracks `first_seen_date`) |
 | AI extraction | Google Gemini API (`gemini-3.6-flash`, free tier) |
 | Semantic matching | `sentence-transformers` (`all-MiniLM-L6-v2`), local, free, no API quota |
-| Alerts | Telegram Bot API |
 | Dashboard | Streamlit, jobs grouped by degree level, animated theme |
-| Automation | GitHub Actions, daily cron trigger (scrape + AI-extract + Telegram alert) |
+| Automation | GitHub Actions, daily cron trigger (scrape + AI-extract only — no alert step, see below) |
 
 ## Project layout
 
@@ -98,37 +97,17 @@ qualification_schema.py       Shared 8-category degree classification schema (si
 ai_filter.py                  Phase 3 — Gemini-based extraction + deterministic profile matching
 pdf_extract.py                Separate opt-in step — fetches & parses the PDF advertisements for real eligibility data
 semantic_match.py             Separate, additive embedding-similarity matching layer
-telegram_alert.py             Phase 4 — Telegram deadline alerts
 validate_degree_extraction.py Spot-check tool — run after any extraction change
 dashboard.py                  Phase 5 — Streamlit UI, jobs grouped by degree level + calendar + applied tracker
-pipeline.py                   Phase 6 — orchestrates scrape -> store -> AI-extract -> Telegram alert (daily, automated)
+pipeline.py                   Phase 6 — orchestrates scrape -> store -> AI-extract (daily, automated)
 .github/workflows/daily.yml   Scheduled daily run
 ```
 
-## Alerts (Telegram)
-
-Phase 4 was originally Gmail/SMTP-based, then removed, and is now rebuilt on
-**Telegram** — simpler than SMTP app-passwords, free, instant delivery.
-`telegram_alert.py` sends one message per run listing every job that matches
-your profile (`ai_filter.py`'s deterministic matcher), closes within 5 days,
-and hasn't already been alerted about (tracked via the `alerted` column — a
-row is only marked alerted after a successful send, so a failed send retries
-next run rather than silently going unnotified). Nothing to alert on today?
-It skips silently by default (set `TELEGRAM_SEND_EMPTY_DIGEST=true` if you'd
-rather get a brief "no urgent deadlines" message every day instead).
-
-**Setup — creating a bot and getting a chat ID (3 steps):**
-1. Message **@BotFather** on Telegram, send `/newbot`, follow the prompts.
-   It replies with a token like `123456789:AAF...` — that's `TELEGRAM_BOT_TOKEN`.
-2. Send your new bot any message (bots can't message you first).
-3. Visit `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser
-   and find `"chat":{"id":...}` in the response — that's `TELEGRAM_CHAT_ID`.
-
-Add both as GitHub Actions secrets (or in `.env` for local runs) alongside
-the existing `GEMINI_API_KEY`/`PROFILE_*` secrets. If they're unset, the
-pipeline logs an error on the alert step but still completes the
-scrape/store/extract steps — a missing alert channel shouldn't fail the
-whole daily run.
+**Phase 4 (deadline alerts) has been removed** — twice, actually: first a
+Gmail/SMTP implementation, then a Telegram rebuild, both taken back out.
+There's currently no alert channel; use the dashboard's calendar view to
+check upcoming deadlines. The `alerted` column still exists in the DB schema
+(harmless, unused) in case alerting comes back later.
 
 ## Setup
 
@@ -282,9 +261,7 @@ each with a colored header and post count, and a sticky jump-to-section nav
 bar at the top. Jobs matching your sidebar profile get a ✅ badge and green
 "why it matched" box; non-matching jobs still show, labeled either "Outside
 your current profile" or — for Professional/Specialist posts — a distinct
-"requires manual review" warning, since those are never auto-matched. This
-view is separate from (and doesn't affect) the Telegram alert logic, which
-stays profile-filtered.
+"requires manual review" warning, since those are never auto-matched.
 
 ## Screenshots
 

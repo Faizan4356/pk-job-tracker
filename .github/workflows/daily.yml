@@ -1,4 +1,4 @@
-name: Daily job scrape + Telegram alert
+name: Daily job scrape
 
 on:
   schedule:
@@ -32,8 +32,6 @@ jobs:
           PROFILE_FIELD_OF_STUDY: ${{ secrets.PROFILE_FIELD_OF_STUDY }}
           PROFILE_AGE: ${{ secrets.PROFILE_AGE }}
           PROFILE_DOMICILE: ${{ secrets.PROFILE_DOMICILE }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python pipeline.py
 
       - name: Commit updated jobs.db

@@ -52,8 +52,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- Phase 5 dashboard tracker
     applied                 INTEGER NOT NULL DEFAULT 0,
 
-    -- Telegram alerting (see telegram_alert.py) — whether this job has
-    -- already been sent in an alert, so re-running daily doesn't re-notify
+    -- Unused since the Telegram alerting feature was removed; kept rather
+    -- than dropped (SQLite ALTER TABLE DROP COLUMN churn isn't worth it for
+    -- a harmless leftover column) in case alerting comes back later.
     alerted                 INTEGER NOT NULL DEFAULT 0,
 
     first_seen_date         TEXT NOT NULL,
@@ -182,15 +183,6 @@ def set_applied(row_id: int, applied: bool, db_path: str = DB_PATH) -> None:
 def save_semantic_score(row_id: int, score: float, db_path: str = DB_PATH) -> None:
     with get_connection(db_path) as conn:
         conn.execute("UPDATE jobs SET semantic_match_score = ? WHERE id = ?", (score, row_id))
-
-
-def mark_alerted(row_ids: list[int], db_path: str = DB_PATH) -> None:
-    if not row_ids:
-        return
-    with get_connection(db_path) as conn:
-        conn.executemany(
-            "UPDATE jobs SET alerted = 1 WHERE id = ?", [(rid,) for rid in row_ids]
-        )
 
 
 def fetch_all_jobs(db_path: str = DB_PATH) -> list[sqlite3.Row]:
