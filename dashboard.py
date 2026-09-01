@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import calendar
 import datetime
+import re
 
 import streamlit as st
 
@@ -121,6 +122,30 @@ with title_col:
 with link_col:
     st.link_button("⭐ View on GitHub", GITHUB_REPO_URL, use_container_width=True)
 
+# Loaded here (earlier than the rest of the page needs it) so the sidebar's
+# field-of-study dropdown below can be built from real, current data instead
+# of a hardcoded list.
+open_jobs = fetch_open_jobs()
+
+
+def _distinct_fields_of_study(jobs) -> list[str]:
+    """Every individual field of study actually required across current
+    listings — extracted jobs often list several acceptable fields per post
+    (e.g. "Botany / Zoology / Chemistry"), so this splits those compound
+    strings into their atomic parts rather than offering 70 messy compound
+    strings as dropdown options."""
+    atoms = set()
+    for job in jobs:
+        raw = job["field_of_study"]
+        if not raw:
+            continue
+        for part in re.split(r"[,/]", raw):
+            part = part.strip()
+            if part and part.lower() not in ("any discipline", "any field", "relevant discipline"):
+                atoms.add(part)
+    return sorted(atoms)
+
+
 # ---------------------------------------------------------------------------
 # Sidebar — optional profile (used only to badge/filter jobs that DO have
 # AI-extracted eligibility fields; most won't yet — see module docstring)
@@ -140,7 +165,13 @@ with st.sidebar:
         options=QUALIFICATION_CATEGORIES[:-1],  # exclude "Not Specified" — not a real qualification to hold
         index=2,  # "Bachelor"
     )
-    field_of_study = st.text_input("Field of study", value="Data Science")
+    # Dropdown of every field of study actually required across current
+    # listings (not free text) — same reasoning as the qualification dropdown.
+    _field_options = ["(any / not sure)"] + _distinct_fields_of_study(open_jobs)
+    _default_field_index = _field_options.index("Data Science") if "Data Science" in _field_options else 0
+    field_of_study = st.selectbox("Field of study", options=_field_options, index=_default_field_index)
+    if field_of_study == "(any / not sure)":
+        field_of_study = ""
     age = st.number_input("Age", min_value=16, max_value=65, value=24)
     domicile = st.text_input("Domicile", value="Punjab")
     only_matches = st.checkbox("Only show jobs matching my profile", value=False)
@@ -229,10 +260,10 @@ def render_job_card(job, is_match: bool, reasons: list[str], key_prefix: str = "
                 )
 
 # ---------------------------------------------------------------------------
-# Load all open jobs (unfiltered) + compute match status per job
+# Compute match status per job (open_jobs was already loaded earlier, above
+# the sidebar, so its field-of-study dropdown could be built from real data)
 # ---------------------------------------------------------------------------
 
-open_jobs = fetch_open_jobs()
 open_jobs = sorted(open_jobs, key=lambda j: j["closing_date"] or "9999-99-99")
 
 jobs_with_match = []
@@ -344,8 +375,16 @@ for level in DEGREE_ORDER:
             reverse=True,
         )
 
-    for job, is_match, reasons in jobs_in_group:
-        render_job_card(job, is_match, reasons)
+    # Large groups (Bachelor's alone can be 40+ posts) get a scrollable,
+    # fixed-height box instead of pushing the page extremely long — small
+    # groups just render normally so they don't get an oddly tall empty box.
+    if len(jobs_in_group) > 6:
+        with st.container(height=600):
+            for job, is_match, reasons in jobs_in_group:
+                render_job_card(job, is_match, reasons)
+    else:
+        for job, is_match, reasons in jobs_in_group:
+            render_job_card(job, is_match, reasons)
 
 # ---------------------------------------------------------------------------
 # 2. Calendar view of upcoming deadlines (all open jobs) — click a date to
