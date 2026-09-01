@@ -1,3 +1,6 @@
+# Full set for local development. The daily GitHub Actions workflow installs
+# from the leaner requirements-ci.txt instead (pipeline.py only needs the
+# first 4) — see that file's comment for why.
 requests>=2.31
 beautifulsoup4>=4.12
 google-genai>=0.3
