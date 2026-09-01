@@ -4,6 +4,7 @@ google-genai>=0.3
 python-dotenv>=1.0
 streamlit>=1.38
 pdfplumber>=0.11  # only needed for pdf_extract.py's explicit, opt-in PDF-parsing step
+sentence-transformers>=3.0  # semantic_match.py's local embedding model, no API cost
 # Optional — only needed if a target site turns out to require JS rendering:
 # selenium>=4.20
 # webdriver-manager>=4.0

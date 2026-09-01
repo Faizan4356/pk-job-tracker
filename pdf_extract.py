@@ -41,6 +41,7 @@ from google import genai
 from google.genai import types as genai_types
 
 from database import get_connection, save_extracted_fields, upsert_listing
+from qualification_schema import QUALIFICATION_PROMPT_SNIPPET
 from scraper import JobListing
 
 load_dotenv()
@@ -112,7 +113,7 @@ def _with_retry(fn, max_attempts: int = 5, base_delay: float = 5.0):
 # PPSC — real text layer, one Gemini call across the whole document
 # ---------------------------------------------------------------------------
 
-PPSC_PDF_PROMPT = """\
+PPSC_PDF_PROMPT = f"""\
 This is text extracted from a Punjab Public Service Commission (PPSC) job \
 advertisement PDF. It covers several government departments, each with one \
 or more posts. Table headers appear garbled (doubled letters like \
@@ -125,8 +126,7 @@ Extract every individual post entry in the document. For each one, output:
   (copy it exactly as it appears, e.g. "BOARD OF INTERMEDIATE & SECONDARY \
   EDUCATION, LAHORE").
 - "post_name": the post title (e.g. "Assistant", "Junior Clerk").
-- "min_qualification": normalized to one of "Matric", "Intermediate", \
-  "Bachelor", "Master", "MPhil", "PhD", or null if unclear.
+{QUALIFICATION_PROMPT_SNIPPET}
 - "field_of_study": the required field(s), or "any discipline" if none \
   specified, or null.
 - "age_range": as "MIN-MAX" using the general (non-relaxed, non-quota) age \
@@ -211,6 +211,7 @@ def run_ppsc(db_path: str = "jobs.db") -> None:
                 "field_of_study": entry.get("field_of_study"),
                 "age_range": entry.get("age_range"),
                 "domicile_requirement": entry.get("domicile_requirement"),
+                "qualification_raw_text": entry.get("qualification_raw_text"),
             },
             db_path=db_path,
         )
@@ -222,7 +223,7 @@ def run_ppsc(db_path: str = "jobs.db") -> None:
 # FPSC — scanned pages, Gemini vision (no text layer to extract)
 # ---------------------------------------------------------------------------
 
-FPSC_PDF_VISION_PROMPT = """\
+FPSC_PDF_VISION_PROMPT = f"""\
 This is a page image from an FPSC (Federal Public Service Commission, \
 Pakistan) consolidated job advertisement. It may list one or more posts \
 with their department, qualification, age limit, and domicile requirement,
@@ -233,8 +234,7 @@ For every actual post entry found on this page, output an object with:
 - "post_name": the post title.
 - "department": the department/organization for this post.
 - "bps_scale": the BPS (Basic Pay Scale) number if stated (e.g. "17"), or null.
-- "min_qualification": normalized to one of "Matric", "Intermediate", \
-  "Bachelor", "Master", "MPhil", "PhD", or null if unclear.
+{QUALIFICATION_PROMPT_SNIPPET}
 - "field_of_study": the required field(s), or "any discipline", or null.
 - "age_range": as "MIN-MAX", or null.
 - "domicile_requirement": the required domicile, or null.
@@ -341,7 +341,7 @@ def run_fpsc(db_path: str = "jobs.db", max_pages: int | None = None) -> None:
                     conn.execute(
                         """
                         UPDATE jobs SET min_qualification = ?, field_of_study = ?,
-                            age_range = ?, domicile_requirement = ?
+                            age_range = ?, domicile_requirement = ?, qualification_raw_text = ?
                         WHERE id = ?
                         """,
                         (
@@ -349,6 +349,7 @@ def run_fpsc(db_path: str = "jobs.db", max_pages: int | None = None) -> None:
                             entry.get("field_of_study"),
                             entry.get("age_range"),
                             entry.get("domicile_requirement"),
+                            entry.get("qualification_raw_text"),
                             row_id,
                         ),
                     )

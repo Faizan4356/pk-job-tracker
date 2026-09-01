@@ -28,13 +28,13 @@ means" into two separate steps, deliberately:
 1. **Extraction (the AI part).** Every post's eligibility text — or, for
    `pdf_extract.py`, entire PDF pages of text or scanned images — goes to
    Google's Gemini API, with instructions to normalize it into structured
-   fields: minimum qualification, field of study, age range, and domicile
-   requirement. This is the part that genuinely needs a model — government
-   departments phrase the same rule a dozen different ways, and a
-   regex-based approach breaks the moment a new ad's wording differs
-   slightly from the last one. Gemini (`gemini-3.6-flash`) was chosen for
-   its free tier — see the quota note below on what that actually means in
-   practice.
+   fields: minimum qualification (one of 8 categories — see below),
+   qualification field of study, age range, and domicile requirement. This
+   is the part that genuinely needs a model — government departments phrase
+   the same rule a dozen different ways, and a regex-based approach breaks
+   the moment a new ad's wording differs slightly from the last one. Gemini
+   (`gemini-3.6-flash`) was chosen for its free tier — see the quota note
+   below on what that actually means in practice.
 2. **Matching (plain Python, deterministic).** Once a job has structured
    fields, comparing it against your profile is just arithmetic and string
    matching — no LLM call needed, which is both cheaper and gives a
@@ -46,34 +46,89 @@ means" into two separate steps, deliberately:
    A job is only reported as a match if every criterion the ad actually
    states is satisfied — an ad that doesn't mention domicile isn't rejected
    for a domicile mismatch that was never asserted.
+3. **Semantic matching (a separate, additive third layer — `semantic_match.py`).**
+   A local sentence-transformer model (`all-MiniLM-L6-v2`, free, no API cost)
+   embeds a free-text description of your background and every job's
+   available text (post title, department, qualification, field of study),
+   then scores cosine similarity. This is a genuinely different kind of
+   signal from #2: it can surface a job that reads as a strong conceptual
+   fit even when the structured fields are missing or ambiguous ("Database
+   Administrator" scored 61% for a "BS Data Science, Python, ML, SQL"
+   profile, well above most Bachelor's-level posts) — but unlike the
+   deterministic matcher, it can't explain *why* with the same rigor, and it
+   can be wrong in ways that are harder to audit. Deliberately **not**
+   merged into one score: the dashboard shows both, clearly labeled (✅
+   deterministic match vs. 🧠 semantic fit %), so you always know which kind
+   of confidence you're looking at.
+
+**Degree-level classification (8 categories).** `min_qualification` is
+normalized to exactly one of: Matric, Intermediate, Bachelor, Master, MPhil,
+PhD, **Professional/Specialist**, or **Not Specified** — this schema lives in
+one place, `qualification_schema.py`, shared by every extraction prompt
+(`ai_filter.py`, `pdf_extract.py`'s PPSC and FPSC paths) and the dashboard's
+grouping, so all three classify consistently. "Professional/Specialist"
+(FCPS, FRCS, CFA, bar-at-law, etc.) is deliberately **not** slotted onto the
+Matric→PhD ladder — mapping a specialist credential onto "closest academic
+level" is exactly the kind of silent mis-flattening that produced the
+Oncology bug below, so instead it's its own category, `match_job()` never
+auto-matches it (manual review only), and the dashboard shows it with its
+own gold-colored section and the original wording preserved in
+`qualification_raw_text`. Run `python validate_degree_extraction.py` after
+any extraction run to see counts per bucket and flag anything unexpected.
 
 ## Tech stack
 
 | Layer | Tool |
 |---|---|
-| Scraping | `requests` + `BeautifulSoup` |
+| Scraping | `requests` + `BeautifulSoup`, follows ASP.NET postback pagination if PPSC's table ever paginates |
 | PDF extraction | `pdfplumber` (text) + Gemini vision (scanned pages) — `pdf_extract.py`, a separate opt-in step |
 | Storage | SQLite (dedup on post title + department + closing date, tracks `first_seen_date`) |
 | AI extraction | Google Gemini API (`gemini-3.6-flash`, free tier) |
-| Dashboard | Streamlit, jobs grouped by degree level |
-| Automation | GitHub Actions, daily cron trigger (scrape + AI-extract only — no alert step currently, see below) |
+| Semantic matching | `sentence-transformers` (`all-MiniLM-L6-v2`), local, free, no API quota |
+| Alerts | Telegram Bot API |
+| Dashboard | Streamlit, jobs grouped by degree level, animated theme |
+| Automation | GitHub Actions, daily cron trigger (scrape + AI-extract + Telegram alert) |
 
 ## Project layout
 
 ```
-scraper.py       Phase 1 — FPSC/PPSC HTML scraping (robots.txt-respecting, rate-limited)
-database.py      Phase 2 — SQLite storage + dedup
-ai_filter.py     Phase 3 — Gemini-based extraction + deterministic profile matching
-pdf_extract.py   Separate opt-in step — fetches & parses the PDF advertisements for real eligibility data
-dashboard.py     Phase 5 — Streamlit UI, jobs grouped by degree level + calendar + applied tracker
-pipeline.py      Phase 6 — orchestrates scrape -> store -> AI-extract (daily, automated)
+scraper.py                    Phase 1 — FPSC/PPSC HTML scraping (robots.txt-respecting, rate-limited, paginated)
+database.py                   Phase 2 — SQLite storage + dedup
+qualification_schema.py       Shared 8-category degree classification schema (single source of truth)
+ai_filter.py                  Phase 3 — Gemini-based extraction + deterministic profile matching
+pdf_extract.py                Separate opt-in step — fetches & parses the PDF advertisements for real eligibility data
+semantic_match.py             Separate, additive embedding-similarity matching layer
+telegram_alert.py             Phase 4 — Telegram deadline alerts
+validate_degree_extraction.py Spot-check tool — run after any extraction change
+dashboard.py                  Phase 5 — Streamlit UI, jobs grouped by degree level + calendar + applied tracker
+pipeline.py                   Phase 6 — orchestrates scrape -> store -> AI-extract -> Telegram alert (daily, automated)
 .github/workflows/daily.yml   Scheduled daily run
 ```
 
-**Phase 4 (deadline alerts) has been removed.** It was originally built on
-Gmail/SMTP; that's been dropped and no replacement channel has been wired up
-yet (Telegram was the other option on the table). For now, check upcoming
-deadlines via the dashboard's calendar view.
+## Alerts (Telegram)
+
+Phase 4 was originally Gmail/SMTP-based, then removed, and is now rebuilt on
+**Telegram** — simpler than SMTP app-passwords, free, instant delivery.
+`telegram_alert.py` sends one message per run listing every job that matches
+your profile (`ai_filter.py`'s deterministic matcher), closes within 5 days,
+and hasn't already been alerted about (tracked via the `alerted` column — a
+row is only marked alerted after a successful send, so a failed send retries
+next run rather than silently going unnotified). Nothing to alert on today?
+It skips silently by default (set `TELEGRAM_SEND_EMPTY_DIGEST=true` if you'd
+rather get a brief "no urgent deadlines" message every day instead).
+
+**Setup — creating a bot and getting a chat ID (3 steps):**
+1. Message **@BotFather** on Telegram, send `/newbot`, follow the prompts.
+   It replies with a token like `123456789:AAF...` — that's `TELEGRAM_BOT_TOKEN`.
+2. Send your new bot any message (bots can't message you first).
+3. Visit `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser
+   and find `"chat":{"id":...}` in the response — that's `TELEGRAM_CHAT_ID`.
+
+Add both as GitHub Actions secrets (or in `.env` for local runs) alongside
+the existing `GEMINI_API_KEY`/`PROFILE_*` secrets. If they're unset, the
+pipeline logs an error on the alert step but still completes the
+scrape/store/extract steps — a missing alert channel shouldn't fail the
+whole daily run.
 
 ## Setup
 
@@ -95,6 +150,12 @@ explicit, opt-in — see "PDFs and robots.txt" below):
 python pdf_extract.py
 ```
 
+Compute semantic match scores (separate, additive — see above):
+
+```bash
+python semantic_match.py
+```
+
 View the dashboard:
 
 ```bash
@@ -104,11 +165,17 @@ streamlit run dashboard.py
 ## Automating it (Phase 6)
 
 `.github/workflows/daily.yml` runs `pipeline.py` every day at 08:00 PKT via
-GitHub Actions — no machine of yours needs to be on. It reads `GEMINI_API_KEY`
-and `PROFILE_*` from the repo's Actions secrets and commits the updated
-`jobs.db` back to the repo after each run, so dedup state and your
-applied/not-applied checkboxes persist across runs on GitHub's ephemeral
-runners. Set the secrets under **Settings → Secrets and variables → Actions**.
+GitHub Actions — no machine of yours needs to be on. It reads `GEMINI_API_KEY`,
+`PROFILE_*`, and `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` from the repo's
+Actions secrets and commits the updated `jobs.db` back to the repo after each
+run, so dedup state and your applied/not-applied checkboxes persist across
+runs on GitHub's ephemeral runners. Set the secrets under **Settings →
+Secrets and variables → Actions**.
+
+`semantic_match.py` is **not** part of this scheduled workflow — it's cheap
+to run (no API quota) but adds a real dependency (`sentence-transformers`,
+which pulls in `torch`) and a slow first-run model download, so it's a
+manual/opt-in step for now rather than something every daily run pays for.
 
 `pdf_extract.py` is **not** part of this scheduled workflow — it's a
 manually-run, explicitly-authorized step (see below), and its Gemini vision
@@ -156,34 +223,74 @@ handles this by:
 If you hit the daily cap often, enabling billing on the Gemini API key
 removes it almost entirely at a cost of pennies for this project's volume.
 
-## Known accuracy limitation
+## Known accuracy limitation (fixed going forward, 2026-09-01)
 
-Gemini's extraction is good for straightforward posts (verified word-for-word
-against the PPSC PDF for entries like "Assistant" — Bachelor's, 18-25,
-Faisalabad District Only) but can understate complex, OR-conditional
-requirements. Example: a "Senior Registrar Oncology" post whose real
+Gemini's extraction was originally good for straightforward posts (verified
+word-for-word against the PPSC PDF for entries like "Assistant" —
+Bachelor's, 18-25, Faisalabad District Only) but understated complex,
+OR-conditional requirements: a "Senior Registrar Oncology" post whose real
 requirement is FRCS/MRCP/MD (or MBBS+FCPS as a fallback) — genuine
 postgraduate medical qualifications — got flattened to "Bachelor" because the
-extraction schema's qualification levels (Matric → PhD) don't have a slot for
-that kind of professional/specialist degree. Worth a manual PDF check for any
-job you're seriously considering, especially medical and other specialist
-posts.
+old schema's qualification levels (Matric → PhD) had no slot for a
+professional/specialist degree.
+
+**Fixed** by adding "Professional/Specialist" and "Not Specified" as their
+own categories (not slotted onto the academic ladder — see "Degree-level
+classification" above), verified against the exact same Oncology text that
+originally exposed the bug: it now correctly extracts
+`min_qualification="Professional/Specialist"` with the full original wording
+preserved in `qualification_raw_text`, and `match_job()` never auto-matches
+it. Also verified: Matric/Intermediate clerical posts aren't defaulted
+upward to Bachelor's, and jobs with genuinely no stated requirement get
+"Not Specified" rather than null or a guessed level.
+
+**The fix applies to extraction going forward** (new prompt, new schema) —
+it does **not** retroactively reclassify the ~68 rows already extracted
+under the old schema before this fix; those still show whatever the old
+prompt produced until `pdf_extract.py` is re-run against them (blocked by
+today's exhausted Gemini quota as of this writing — see the quota note
+above). Run `python validate_degree_extraction.py` to check current bucket
+counts and spot-check anything flagged.
 
 ## Other things worth knowing
 
 - FPSC's site is a Next.js app; its job-listing page happens to be
   server-rendered HTML so `scraper.py` doesn't need Selenium, but other FPSC
-  pages may not be.
-- PPSC's table showed 40 rows with no pagination controls as of 2026-08-31 —
-  if PPSC starts paginating a larger batch, `scraper.py`'s PPSC parser
-  doesn't currently follow "next page" links.
+  pages may not be. As of 2026-09-01, FPSC currently has **zero active
+  advertisements** listed (its own empty-state UI, not a scraper bug) — the
+  "Consolidated Advertisement No. 3/2026" seen in earlier testing has since
+  closed.
+- PPSC's table showed 40 rows with no pagination controls as of 2026-08-31.
+  `scraper.py` now detects and follows ASP.NET postback-style "next page"
+  pagination if PPSC starts paginating a larger batch — but since no
+  paginated PPSC page exists to test against yet, that path is implemented
+  per standard ASP.NET GridView pager conventions and verified only for the
+  "no pagination present" case (confirmed to behave identically to before:
+  same 40 rows, single page). Worth a spot-check against a real paginated
+  page if/when PPSC posts one large enough to trigger it.
 - `ai_filter.py`'s `filter_jobs_for_profile()` still runs during the daily
   pipeline and logs how many jobs match your profile — check `dashboard.py`
   for the actual filtered/grouped view.
 
+## Browse by Degree
+
+The dashboard's main view ("Browse All Jobs by Degree Level") lists every
+open job — not filtered to your profile — grouped under a fixed-order
+section per qualification level (Matric → Intermediate → Bachelor → Master →
+MPhil → PhD → Professional/Specialist → Not Specified → Not yet extracted),
+each with a colored header and post count, and a sticky jump-to-section nav
+bar at the top. Jobs matching your sidebar profile get a ✅ badge and green
+"why it matched" box; non-matching jobs still show, labeled either "Outside
+your current profile" or — for Professional/Specialist posts — a distinct
+"requires manual review" warning, since those are never auto-matched. This
+view is separate from (and doesn't affect) the Telegram alert logic, which
+stays profile-filtered.
+
 ## Screenshots
 
-_Add screenshots of the dashboard here:_ `screenshots/dashboard.png`
+_Add screenshots of the dashboard here:_ `screenshots/dashboard.png` — not
+yet added; needs an actual browser session against the live dashboard, which
+wasn't available while building this.
 
 ## Why I built this
 

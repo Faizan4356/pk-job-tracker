@@ -35,11 +35,13 @@ from dataclasses import dataclass
 from google import genai
 from google.genai import types as genai_types
 
+from qualification_schema import QUALIFICATION_PROMPT_SNIPPET
+
 log = logging.getLogger("ai_filter")
 
 MODEL = "gemini-3.6-flash"
 
-EXTRACTION_SYSTEM_PROMPT = """\
+EXTRACTION_SYSTEM_PROMPT = f"""\
 You extract structured eligibility fields from Pakistani government job \
 advertisement text. The wording varies a lot between ads (different \
 departments, different eras of the same form) — infer the intent, don't \
@@ -48,9 +50,7 @@ require an exact phrase match.
 Respond with ONLY a JSON object (no markdown fences, no commentary) with \
 exactly these keys:
 
-- "min_qualification": the minimum education level required, normalized to \
-  one of: "Matric", "Intermediate", "Bachelor", "Master", "MPhil", "PhD", \
-  or null if not stated.
+{QUALIFICATION_PROMPT_SNIPPET}
 - "field_of_study": the required field(s) of study as a short string (e.g. \
   "Computer Science, Data Science, or related field"), or "any discipline" \
   if the ad accepts any field, or null if not stated.
@@ -69,6 +69,7 @@ class ExtractedEligibility:
     field_of_study: str | None
     age_range: str | None
     domicile_requirement: str | None
+    qualification_raw_text: str | None = None
 
 
 def _parse_json_response(text: str) -> dict:
@@ -93,7 +94,7 @@ def extract_eligibility_fields(
     client = client or _get_client()
 
     if not raw_text or not raw_text.strip():
-        return ExtractedEligibility(None, None, None, None)
+        return ExtractedEligibility(None, None, None, None, None)
 
     response = client.models.generate_content(
         model=MODEL,
@@ -108,13 +109,14 @@ def extract_eligibility_fields(
         data = _parse_json_response(response.text)
     except (json.JSONDecodeError, ValueError):
         log.warning("Could not parse extraction response as JSON: %r", response.text[:200])
-        return ExtractedEligibility(None, None, None, None)
+        return ExtractedEligibility(None, None, None, None, None)
 
     return ExtractedEligibility(
         min_qualification=data.get("min_qualification"),
         field_of_study=data.get("field_of_study"),
         age_range=data.get("age_range"),
         domicile_requirement=data.get("domicile_requirement"),
+        qualification_raw_text=data.get("qualification_raw_text"),
     )
 
 
@@ -142,6 +144,7 @@ def extract_all_pending(db_path: str = "jobs.db") -> int:
                 "field_of_study": fields.field_of_study,
                 "age_range": fields.age_range,
                 "domicile_requirement": fields.domicile_requirement,
+                "qualification_raw_text": fields.qualification_raw_text,
             },
             db_path=db_path,
         )
@@ -207,6 +210,20 @@ def match_job(job: sqlite3.Row, profile: UserProfile) -> tuple[bool, list[str]]:
     skipped (we don't reject a job just because the ad omitted a field).
     """
     reasons: list[str] = []
+
+    # "Professional/Specialist" quals (FCPS, FRCS, CFA, ...) aren't on the
+    # Matric->PhD ladder at all — silently skipping the check (like an
+    # unstated qualification) risks a false match, and mapping it onto the
+    # ladder risks mis-flattening a specialist credential into "Bachelor".
+    # Neither is safe against a plain profile string, so this is treated as
+    # requiring manual review: never auto-matched, but still shown (with its
+    # raw wording) in the dashboard rather than hidden or silently rejected.
+    if job["min_qualification"] == "Professional/Specialist":
+        return False, []
+
+    # "Not Specified" means the ad genuinely states no minimum qualification
+    # — same handling as an unstated/None field: skip this criterion rather
+    # than reject or default it to any particular level.
 
     # Qualification
     required_level = _qualification_level(job["min_qualification"])

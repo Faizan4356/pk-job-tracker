@@ -113,6 +113,23 @@ class PoliteSession:
             log.error("Request failed for %s: %s", url, exc)
             return None
 
+    def post(self, url: str, data: dict) -> requests.Response | None:
+        """Same robots.txt + rate-limit checks as get(), for ASP.NET postback
+        pagination (PPSC's table pages via __doPostBack, not separate URLs —
+        see follow_ppsc_pagination())."""
+        if not self.allowed(url):
+            log.warning("Blocked by robots.txt, skipping: %s", url)
+            return None
+        host = urlparse(url).netloc
+        self._throttle(host)
+        try:
+            resp = self.session.post(url, data=data, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as exc:
+            log.error("POST failed for %s: %s", url, exc)
+            return None
+
 
 def text_or_none(node) -> str | None:
     if node is None:
@@ -275,11 +292,68 @@ def parse_ppsc_listing(html: str, base_url: str) -> list[JobListing]:
     return listings
 
 
+def _extract_aspnet_form_state(soup: BeautifulSoup) -> dict:
+    """The hidden __VIEWSTATE/__VIEWSTATEGENERATOR/__EVENTVALIDATION fields
+    ASP.NET pages require on every postback (including "next page" clicks).
+    Each postback response carries fresh values — the caller must re-extract
+    these from the new page before requesting yet another page."""
+    state = {}
+    for name in ("__VIEWSTATE", "__VIEWSTATEGENERATOR", "__EVENTVALIDATION"):
+        tag = soup.select_one(f'input[name="{name}"]')
+        state[name] = tag["value"] if tag and tag.has_attr("value") else ""
+    return state
+
+
+def _find_ppsc_next_page_postback(soup: BeautifulSoup) -> tuple[str, str] | None:
+    """Look for an ASP.NET GridView-style pager "next page" postback link:
+    <a href="javascript:__doPostBack('target','Page$N')">. Returns
+    (event_target, event_argument) for the next page, or None if this
+    table has no pager (PPSC's current 40-row listing has none — verified
+    2026-08-31 — so this path is unexercised against real multi-page data;
+    implemented per standard ASP.NET GridView pager conventions and should
+    be spot-checked against a live paginated page if/when PPSC posts one).
+    """
+    for a in soup.select('a[href^="javascript:__doPostBack"]'):
+        match = re.match(r"javascript:__doPostBack\('([^']*)','([^']*)'\)", a["href"])
+        if not match:
+            continue
+        target, argument = match.groups()
+        is_pager = "pager" in target.lower() or argument.startswith("Page$")
+        text = a.get_text(strip=True).lower()
+        if is_pager and text in ("next", ">", "»", "..."):
+            return target, argument
+    return None
+
+
 def scrape_ppsc(session: PoliteSession) -> list[JobListing]:
     resp = session.get(PPSC_LISTING_URL)
     if resp is None:
         return []
-    return parse_ppsc_listing(resp.text, PPSC_LISTING_URL)
+
+    listings = parse_ppsc_listing(resp.text, PPSC_LISTING_URL)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    pages_scraped = 1
+
+    next_postback = _find_ppsc_next_page_postback(soup)
+    while next_postback is not None:
+        target, argument = next_postback
+        form_state = _extract_aspnet_form_state(soup)
+        resp = session.post(PPSC_LISTING_URL, data={
+            "__EVENTTARGET": target,
+            "__EVENTARGUMENT": argument,
+            **form_state,
+        })
+        if resp is None:
+            log.warning("PPSC: pagination postback failed, stopping at page %d", pages_scraped)
+            break
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        listings.extend(parse_ppsc_listing(resp.text, PPSC_LISTING_URL))
+        pages_scraped += 1
+        next_postback = _find_ppsc_next_page_postback(soup)
+
+    log.info("PPSC: scraped %d page(s), %d total rows", pages_scraped, len(listings))
+    return listings
 
 
 def scrape_all() -> list[JobListing]:
