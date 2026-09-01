@@ -122,12 +122,23 @@ with title_col:
 with link_col:
     st.link_button("⭐ View on GitHub", GITHUB_REPO_URL, use_container_width=True)
 
+# Cached — without this, every checkbox/dropdown interaction re-runs the
+# whole script AND re-hits the database from scratch. sqlite3.Row isn't
+# picklable (what st.cache_data needs to store/compare results), so this
+# converts to plain dicts, which behave identically for the job["field"]
+# access pattern used everywhere else in this file.
+@st.cache_data(ttl=300)
+def _load_open_jobs() -> list[dict]:
+    return [dict(row) for row in fetch_open_jobs()]
+
+
 # Loaded here (earlier than the rest of the page needs it) so the sidebar's
 # field-of-study dropdown below can be built from real, current data instead
 # of a hardcoded list.
-open_jobs = fetch_open_jobs()
+open_jobs = _load_open_jobs()
 
 
+@st.cache_data(ttl=300)
 def _distinct_fields_of_study(jobs) -> list[str]:
     """Every individual field of study actually required across current
     listings — extracted jobs often list several acceptable fields per post
@@ -199,25 +210,64 @@ profile = UserProfile(
 )
 
 
-def render_job_card(job, is_match: bool, reasons: list[str], key_prefix: str = "") -> None:
-    """One expander for a single job — shared by the grouped list and the
-    calendar's click-a-date view so both render identically. key_prefix keeps
-    widget keys unique when the same job appears in both places at once."""
+if "selected_job_id" not in st.session_state:
+    st.session_state.selected_job_id = None
+
+
+def _job_line_label(job, is_match: bool) -> tuple[str, bool]:
+    """The one-line summary shown for every job — cheap to build, so it's
+    safe to render for all 100 jobs. Returns (label, urgent)."""
     days_left = None
     if job["closing_date"]:
         try:
             days_left = (datetime.date.fromisoformat(job["closing_date"]) - datetime.date.today()).days
         except ValueError:
             pass
-
     urgent = days_left is not None and days_left <= 2
     match_flag = " ✅" if is_match else ""
     semantic_score = job["semantic_match_score"]
     semantic_flag = f" 🧠{semantic_score * 100:.0f}%" if semantic_score is not None else ""
-    label = (f"{'🚨 ' if urgent else ''}{job['post_title']} — {job['department'] or 'N/A'}"
-             f"{match_flag}{semantic_flag}")
+    closes = f"closes {job['closing_date']}" if job["closing_date"] else "closing date N/A"
+    label = (f"{'🚨 ' if urgent else ''}{job['post_title']} — {job['department'] or 'N/A'} "
+             f"· {closes}{match_flag}{semantic_flag}")
+    return label, urgent
 
-    with st.expander(label, expanded=urgent, key=f"{key_prefix}expander-{job['id']}"):
+
+def render_job_line(job, is_match: bool, reasons: list[str], key_prefix: str = "") -> None:
+    """One cheap clickable line per job — the fix for ~100 jobs making the
+    page slow: st.expander still builds every widget inside it even while
+    collapsed, so 100 expanders cost the same as 100 fully-expanded cards.
+    A plain button is far cheaper; full detail (render_job_detail) only
+    renders for whichever single job is actually selected."""
+    label, urgent = _job_line_label(job, is_match)
+    is_selected = st.session_state.selected_job_id == job["id"]
+
+    if st.button(label, key=f"{key_prefix}line-{job['id']}",
+                 type="primary" if is_selected else "secondary", use_container_width=True):
+        st.session_state.selected_job_id = None if is_selected else job["id"]
+        st.rerun()
+
+    if is_selected:
+        render_job_detail(job, is_match, reasons, key_prefix=key_prefix)
+
+
+def render_job_detail(job, is_match: bool, reasons: list[str], key_prefix: str = "") -> None:
+    """Full detail panel for one job — only ever rendered for the single
+    currently-selected job, not looped over every job in a group."""
+    _label, urgent = _job_line_label(job, is_match)
+    days_left = None
+    if job["closing_date"]:
+        try:
+            days_left = (datetime.date.fromisoformat(job["closing_date"]) - datetime.date.today()).days
+        except ValueError:
+            pass
+    semantic_score = job["semantic_match_score"]
+
+    with st.container(border=True):
+        if st.button("✕ Close", key=f"{key_prefix}close-{job['id']}"):
+            st.session_state.selected_job_id = None
+            st.rerun()
+
         col1, col2 = st.columns([3, 1])
         with col1:
             st.write(f"**Source:** {job['source']}")
@@ -248,6 +298,7 @@ def render_job_card(job, is_match: bool, reasons: list[str], key_prefix: str = "
             )
             if applied != bool(job["applied"]):
                 set_applied(job["id"], applied)
+                _load_open_jobs.clear()  # otherwise the cached list still shows the old applied state
                 st.rerun()
             if job["advertisement_link"]:
                 st.link_button(
@@ -381,10 +432,10 @@ for level in DEGREE_ORDER:
     if len(jobs_in_group) > 6:
         with st.container(height=600):
             for job, is_match, reasons in jobs_in_group:
-                render_job_card(job, is_match, reasons)
+                render_job_line(job, is_match, reasons)
     else:
         for job, is_match, reasons in jobs_in_group:
-            render_job_card(job, is_match, reasons)
+            render_job_line(job, is_match, reasons)
 
 # ---------------------------------------------------------------------------
 # 2. Calendar view of upcoming deadlines (all open jobs) — click a date to
@@ -489,4 +540,4 @@ if selected_day is not None:
         st.session_state.selected_calendar_day = None
         st.rerun()
     for job, is_match, reasons in jobs_that_day:
-        render_job_card(job, is_match, reasons, key_prefix="cal-")
+        render_job_line(job, is_match, reasons, key_prefix="cal-")
