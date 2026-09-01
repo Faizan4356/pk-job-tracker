@@ -119,6 +119,25 @@ st.markdown(
 
 GITHUB_REPO_URL = "https://github.com/Faizan4356/pk-job-tracker"
 
+# Where to apply/register — verified 2026-09-01, not per-job (neither site
+# exposes a per-post application URL; both route through one shared portal).
+# FPSC: linked directly as "To Apply Online" from fpsc.gov.pk's homepage,
+# confirmed reachable (HTTP 200). PPSC: no distinct apply/register page was
+# found in its site nav or the PDF advertisement text (which just says
+# "please visit www.ppsc.gop.pk") — linking to the main site rather than
+# guessing a specific sub-page that might not exist.
+APPLY_PORTAL_URLS = {
+    "FPSC": "https://cp.fpsc.gov.pk/gr_one/index_gr.php",
+    "PPSC": "https://ppsc.gop.pk/",
+}
+APPLY_PORTAL_HELP = {
+    "FPSC": "FPSC's online application portal — register/log in and apply "
+            "under the relevant advertisement.",
+    "PPSC": "PPSC's main site — no distinct apply/register page could be "
+            "confirmed, so this links to the site itself; check the PDF "
+            "advertisement for the exact application procedure.",
+}
+
 title_col, link_col = st.columns([5, 1])
 with title_col:
     st.title("🇵🇰 Pakistani Government Job Tracker")
@@ -310,6 +329,15 @@ def render_job_detail(job, is_match: bool, reasons: list[str], key_prefix: str =
                     key=f"{key_prefix}pdf-{job['id']}",
                     help="Open the complete advertisement PDF for full details "
                          "(syllabus, exact eligibility wording, how to apply).",
+                    use_container_width=True,
+                )
+            apply_url = APPLY_PORTAL_URLS.get(job["source"])
+            if apply_url:
+                st.link_button(
+                    "📝 Apply / Register",
+                    apply_url,
+                    key=f"{key_prefix}apply-{job['id']}",
+                    help=APPLY_PORTAL_HELP.get(job["source"], ""),
                     use_container_width=True,
                 )
 
