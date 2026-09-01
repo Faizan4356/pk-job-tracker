@@ -132,7 +132,14 @@ with st.sidebar:
     st.header("Your Profile")
     st.caption("Used to badge jobs that have eligibility data. Most listings "
                "don't yet — see the note at the top of the page.")
-    qualification = st.text_input("Qualification", value="BS Data Science")
+    # A dropdown (not free text) so matching is exact rather than inferred
+    # from wording — "BS Data Science" as free text relied on substring
+    # guessing; selecting "Bachelor" directly is unambiguous.
+    qualification = st.selectbox(
+        "Qualification",
+        options=QUALIFICATION_CATEGORIES[:-1],  # exclude "Not Specified" — not a real qualification to hold
+        index=2,  # "Bachelor"
+    )
     field_of_study = st.text_input("Field of study", value="Data Science")
     age = st.number_input("Age", min_value=16, max_value=65, value=24)
     domicile = st.text_input("Domicile", value="Punjab")
@@ -142,6 +149,16 @@ with st.sidebar:
                "fuzzier signal from embedding similarity — not a substitute "
                "for the deterministic match above.")
     sort_by_semantic = st.checkbox("Sort each degree section by semantic match score", value=False)
+    st.divider()
+    st.caption("Jump to a degree section:")
+    for _level in QUALIFICATION_CATEGORIES + ["Not yet extracted"]:
+        _anchor = _level.lower().replace("/", "-").replace(" ", "-")
+        _color = DEGREE_COLORS.get(_level, "#94a3b8")
+        st.markdown(
+            f'<a href="#{_anchor}" style="color:{_color} !important; font-weight:600; '
+            f'text-decoration:none; display:block; padding:2px 0;">→ {_level}</a>',
+            unsafe_allow_html=True,
+        )
 
 profile = UserProfile(
     qualification=qualification,
@@ -251,10 +268,26 @@ st.caption("Every open job, grouped by extracted degree level — not filtered t
            "your profile. Jobs outside your profile are still shown, labeled "
            "accordingly, so you can browse the full picture.")
 
+search_query = st.text_input(
+    "🔍 Search jobs (post title, department, or degree)", value="",
+    placeholder="e.g. Assistant, Computer, Bachelor..."
+)
+
 display_jobs = [item for item in jobs_with_match if item[1]] if only_matches else jobs_with_match
 
+if search_query.strip():
+    q = search_query.strip().lower()
+    display_jobs = [
+        item for item in display_jobs
+        if q in (item[0]["post_title"] or "").lower()
+        or q in (item[0]["department"] or "").lower()
+        or q in (item[0]["min_qualification"] or "").lower()
+    ]
+    st.caption(f"{len(display_jobs)} job(s) match \"{search_query}\"")
+
 if not display_jobs:
-    st.info("No jobs to show." if only_matches else
+    st.info(f"No jobs match \"{search_query}\"." if search_query.strip() else
+             "No jobs to show." if only_matches else
              "No open listings right now — check back after the next scrape run.")
 
 # Fixed degree order, single source of truth shared with the extraction

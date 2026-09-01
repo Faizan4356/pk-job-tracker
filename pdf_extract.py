@@ -70,7 +70,7 @@ DOWNLOAD_USER_AGENT = ("PKJobAlertBot/1.0 (+mailto:youremail@example.com; "
 
 def download_pdf(url: str) -> bytes:
     safe_url = urllib.parse.quote(url, safe=":/")
-    resp = requests.get(safe_url, headers={"User-Agent": DOWNLOAD_USER_AGENT}, timeout=60)
+    resp = requests.get(safe_url, headers={"User-Agent": DOWNLOAD_USER_AGENT}, timeout=180)
     resp.raise_for_status()
     return resp.content
 
