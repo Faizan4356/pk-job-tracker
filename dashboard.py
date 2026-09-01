@@ -78,17 +78,17 @@ st.markdown(
         background: rgba(15, 23, 42, 0.85);
         backdrop-filter: blur(6px);
     }
-    [data-testid="stExpander"] {
-        background: rgba(255, 255, 255, 0.94);
+    /* A bordered st.container() (used for the job detail panel) gets a
+       visible dark card so it reads as a distinct panel against the
+       animated background, without needing to fight Streamlit's internal
+       markup for a "light card" look (which is what broke text contrast
+       last time — text and its container background were styled by two
+       different, inconsistent assumptions). */
+    div[data-testid="stVerticalBlock"] > div[style*="border"] {
+        background: rgba(15, 23, 42, 0.55);
         border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-        margin-bottom: 0.5rem;
+        padding: 0.5rem;
     }
-    /* Light text everywhere by default (readable on the dark moving
-       background), overridden back to dark text specifically inside the
-       white expander cards — without this split, job details inside the
-       cards would render as near-invisible light-on-white text. */
     h1, h2, h3, h4 {
         color: #ffffff !important;
         text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
@@ -96,17 +96,20 @@ st.markdown(
     p, span, label, .stMarkdown, .stCaption, [data-testid="stCaptionContainer"] {
         color: #f1f5f9;
     }
-    /* Catch-all (not just specific tags) so this holds regardless of which
-       element Streamlit's expander header/body actually use internally. */
-    [data-testid="stExpander"] * {
-        color: #1e293b !important;
+    /* Interactive widgets (buttons, checkboxes) manage their own contrast
+       via Streamlit's built-in component styling — the broad light-text
+       rule above was leaking into them and breaking that (light text on
+       their own light background = invisible). Revert lets their native
+       styling take back over instead of guessing replacement colors. */
+    .stButton *, .stLinkButton *, .stDownloadButton *, .stCheckbox * {
+        color: revert !important;
         text-shadow: none !important;
     }
-    .stButton > button, .stLinkButton > a {
+    .stButton > button, .stLinkButton > a, .stDownloadButton > button {
         border-radius: 8px;
         transition: transform 0.15s ease;
     }
-    .stButton > button:hover, .stLinkButton > a:hover {
+    .stButton > button:hover, .stLinkButton > a:hover, .stDownloadButton > button:hover {
         transform: scale(1.03);
     }
     </style>
