@@ -20,6 +20,41 @@ your own eligibility is exactly the kind of repetitive, easy-to-get-wrong
 task that costs people real opportunities — not because they weren't
 qualified, but because they never opened the right PDF.
 
+## How it works (architecture)
+
+```mermaid
+flowchart TD
+    subgraph Daily["Daily, automated — GitHub Actions"]
+        FPSC[("FPSC website")] -->|HTML, robots.txt-respecting| Scraper["scraper.py"]
+        PPSC[("PPSC website")] -->|HTML, follows pagination| Scraper
+        Scraper --> DB[("jobs.db\nSQLite, dedup'd")]
+        DB --> Extract1["ai_filter.py\nGemini extraction\n(only if raw HTML has\neligibility text)"]
+        Extract1 --> DB
+    end
+
+    subgraph Manual["Separate, manual, opt-in"]
+        PDF[("FPSC / PPSC\nPDF advertisements")] -->|"explicit fetch\n(robots.txt disallows\nauto-crawling PDFs)"| PdfExtract["pdf_extract.py\nGemini text + vision"]
+        PdfExtract --> DB
+        DB --> Semantic["semantic_match.py\nlocal sentence-transformer\nembedding similarity"]
+        Semantic --> DB
+    end
+
+    DB --> Dashboard["dashboard.py (Streamlit)\ngrouped by degree level"]
+
+    Profile["Your profile\n(qualification, age,\nfield, domicile)"] --> Match["ai_filter.match_job()\ndeterministic, auditable\n✅ + reasons"]
+    DB --> Match
+    Match --> Dashboard
+    Semantic -.->|"🧠 fit %, separate signal\nnever merged with ✅"| Dashboard
+```
+
+**Two independent matching signals, deliberately not merged** — see the
+dashboard: a job either gets a ✅ with an explicit auditable reason
+(`match_job()`, plain Python, no LLM), and/or a 🧠 fuzzy percentage
+(`semantic_match.py`, embedding similarity). One is rigorous but literal;
+the other catches conceptual fits the rules miss but can't explain itself
+with the same certainty. Mixing them into one number would hide which kind
+of confidence you're looking at.
+
 ## How the AI-based extraction works
 
 The pipeline splits "read messy text/scanned pages" from "decide what it
